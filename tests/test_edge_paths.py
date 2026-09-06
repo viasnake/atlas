@@ -16,8 +16,8 @@ from atlas.config import AtlasConfig, ProgramConfig, ProgramRuntime, RuntimeConf
 from atlas.context import child_environment, execution_context, write_context
 from atlas.execution import (
     _append_run_log,
+    _execution_signals,
     _exit_code,
-    _forward_sigterm,
     _terminate,
     execute,
 )
@@ -158,13 +158,14 @@ def test_process_helpers_cover_signal_and_timeout_paths(monkeypatch) -> None:
     assert _exit_code(7) == 7
 
 
-def test_forward_sigterm_handler_handles_gone_process(monkeypatch) -> None:
-    monkeypatch.setattr(execution_module.os, "killpg", lambda _pid, _signum: (_ for _ in ()).throw(ProcessLookupError()))
-    process = FakeProcess([])
-    with _forward_sigterm(process):
+def test_execution_signals_defer_until_child_is_owned():
+    previous = signal.getsignal(signal.SIGTERM)
+    with _execution_signals() as received:
         handler = signal.getsignal(signal.SIGTERM)
-        assert callable(handler)
         handler(signal.SIGTERM, None)
+        handler(signal.SIGINT, None)
+        assert received == [signal.SIGTERM, signal.SIGINT]
+    assert signal.getsignal(signal.SIGTERM) == previous
 
 
 def test_runtime_resolution_edges(monkeypatch, tmp_path: Path) -> None:

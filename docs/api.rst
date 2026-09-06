@@ -15,8 +15,8 @@ implementation:
    print(context.execution.operation_id)
 
 The same context is available to non-Python programs as the JSON document named by
-``ATLAS_CONTEXT_FILE``. The public package contains only host identity, standard paths, and
-execution context models.
+``ATLAS_CONTEXT_FILE``. The public package provides host identity, standard paths, execution context,
+volatile execution storage, and external secret retrieval.
 
 .. automodule:: atlas_core
    :members:
@@ -38,4 +38,10 @@ Secrets
 -------
 
 .. automodule:: atlas_core.secrets
+   :members:
+
+Execution storage
+-----------------
+
+.. automodule:: atlas_core.execution
    :members:

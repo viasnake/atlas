@@ -138,6 +138,19 @@ The executor preserves the child exit status, returns ``124`` for a timeout, and
 termination to ``128 + signal``. The child is launched with the caller's working directory and
 with an exact argument vector; shell interpretation is not used.
 
+Each execution requires Linux with ``/dev/shm`` mounted as tmpfs. Atlas creates
+an owner-only directory there and exposes its path as ``ATLAS_RUN_TEMP_DIR``.
+Programs can obtain it through ``atlas_core.execution.get_run_directory()``.
+Keep subprocesses in the inherited process group when using this storage; do
+not start a new session or leave background work running beyond the command.
+Nested Atlas executions receive separate directories.
+
+On completion, timeout, SIGINT or SIGTERM, Atlas stops the command's process
+group, including descendants left by an exited group leader, before deleting
+the directory and recording the result. SIGKILL of the Atlas supervisor or host
+failure cannot run cleanup. Clear abandoned volatile files before reusing a
+recovered host. Disable swap or use encrypted swap for secret-bearing storage.
+
 External secrets
 ----------------
 

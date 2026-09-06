@@ -15,6 +15,7 @@ from getpass import getuser
 from pathlib import Path
 from uuid import uuid4
 
+from atlas_core.execution import temporary_run_directory
 from atlas_core.host import get_host
 
 from .catalog import CommandRef
@@ -57,28 +58,43 @@ def _terminate(process: subprocess.Popen[object]) -> None:
     try:
         process.wait(timeout=_TERMINATE_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+        pass
+    # The group can outlive its leader, including after a successful command.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
 
 
 @contextmanager
-def _forward_sigterm(process: subprocess.Popen[object]) -> Iterator[None]:
-    previous = signal.getsignal(signal.SIGTERM)
+def _execution_signals() -> Iterator[list[int]]:
+    received: list[int] = []
+    previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
 
-    def forward(signum: int, _frame: object) -> None:
-        try:
-            os.killpg(process.pid, signum)
-        except ProcessLookupError:
-            pass
+    def receive(signum: int, _frame: object) -> None:
+        received.append(signum)
 
-    signal.signal(signal.SIGTERM, forward)
+    for number in previous:
+        signal.signal(number, receive)
     try:
-        yield
+        yield received
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def _wait(process: subprocess.Popen[object], timeout: int | None, received: list[int]) -> int:
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        if received:
+            return SIGNAL_EXIT_OFFSET + received[0]
+        if deadline is not None and time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        try:
+            return _exit_code(process.wait(timeout=0.1))
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _exit_code(return_code: int) -> int:
@@ -181,29 +197,36 @@ def execute(
         )
         if command.program.runtime.python_version is not None:
             environment["ATLAS_PYTHON_VERSION"] = command.program.runtime.python_version
-        try:
-            process = subprocess.Popen(
-                argv,
-                cwd=working_directory,
-                env=environment,
-                start_new_session=True,
-            )
-        except FileNotFoundError:
-            exit_code = MISSING_EXECUTABLE_EXIT_CODE
-        except PermissionError:
-            exit_code = 126
-        else:
-            with _forward_sigterm(process):
+        with _execution_signals() as received, temporary_run_directory() as directory:
+            environment["ATLAS_RUN_TEMP_DIR"] = str(directory)
+            try:
                 try:
-                    exit_code = _exit_code(process.wait(timeout=timeout_seconds))
-                except subprocess.TimeoutExpired:
-                    timed_out = True
+                    process = subprocess.Popen(
+                        argv,
+                        cwd=working_directory,
+                        env=environment,
+                        start_new_session=True,
+                    )
+                except FileNotFoundError:
+                    exit_code = MISSING_EXECUTABLE_EXIT_CODE
+                except PermissionError:
+                    exit_code = 126
+                else:
+                    try:
+                        exit_code = _wait(process, timeout_seconds, received)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        exit_code = TIMEOUT_EXIT_CODE
+                    except KeyboardInterrupt:
+                        exit_code = 130
+            finally:
+                if process is not None:
                     _terminate(process)
-                    exit_code = TIMEOUT_EXIT_CODE
-                except KeyboardInterrupt:
-                    _terminate(process)
-                    exit_code = 130
     finally:
+        try:
+            context_file.unlink()
+        except FileNotFoundError:
+            pass
         _record(
             paths,
             command,
@@ -216,8 +239,4 @@ def execute(
             timed_out=timed_out,
             working_directory=working_directory,
         )
-        try:
-            context_file.unlink()
-        except FileNotFoundError:
-            pass
     return exit_code
