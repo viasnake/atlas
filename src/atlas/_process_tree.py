@@ -83,6 +83,11 @@ def launch(directory: Path, argv: list[str]) -> int:
             check_admission(directory)
             os.setsid()
             (directory / ".group").write_text(str(os.getpid()))
+        # Match Popen(restore_signals=True) after this Python wrapper's startup.
+        for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ"):
+            number = getattr(signal, name, None)
+            if number is not None:
+                signal.signal(number, signal.SIG_DFL)
         os.execv(argv[0], argv)
     except FileNotFoundError:
         return 127

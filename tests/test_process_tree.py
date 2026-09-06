@@ -52,6 +52,7 @@ def test_unregistered_spawn_and_expired_grace(monkeypatch):
 
 def test_launch_registers_before_exec_and_rejects_cancelled_ancestors(monkeypatch):
     monkeypatch.setattr(tree.os, "setsid", lambda: None)
+    monkeypatch.setattr(tree.signal, "signal", lambda *_args: None)
     calls = []
     with temporary_run_directory() as root:
         def execute(binary, argv):
@@ -173,3 +174,13 @@ time.sleep(60)
     finally:
         sender.join()
     assert received.read_text() == str(signal.SIGINT)
+
+
+def test_native_command_receives_default_sigpipe(tmp_path):
+    from atlas.execution import execute
+
+    from .test_edge_paths import native_command
+
+    paths, _, command = native_command(tmp_path)
+    command.path.write_text("#!/bin/sh\nkill -PIPE $$\nexit 42\n")
+    assert execute(paths, command, []) == 128 + signal.SIGPIPE
