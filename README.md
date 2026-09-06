@@ -12,7 +12,7 @@ Atlas manages:
 - one shared executor for `atlas run` and shims; and
 - a small JSONL record of completed executions.
 
-Atlas does not fetch or version automation programs. It does not contain provider, inventory,
+Atlas does not fetch or version automation programs. It does not contain infrastructure provider, inventory,
 workflow, scheduler, or infrastructure lifecycle code. Put those responsibilities in the
 programs registered with Atlas and invoke them through Atlas when a common execution contract is
 needed.
@@ -86,6 +86,14 @@ print(context.host.id, context.execution.run_id)
 Execution facts are appended to `/var/lib/atlas/logs/runs.jsonl`. Atlas records the timestamp,
 host, user, program, command, identifiers, duration, and exit status; command output remains the
 responsibility of the invoking terminal, service manager, or CI system.
+
+## External secrets
+
+Programs can use `atlas_core.secrets` to retrieve logical secret names from an external
+secret manager. Host-owned mappings and owner-only bootstrap credentials stay outside
+automation repositories. `atlas secret check <logical-name> ...` verifies availability
+without displaying values. See [the operator reference](docs/reference.rst) for setup,
+program integration, and recovery.
 
 ## Development
 
