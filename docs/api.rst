@@ -33,3 +33,9 @@ execution context models.
 .. automodule:: atlas_core.paths
    :members:
    :undoc-members:
+
+Secrets
+-------
+
+.. automodule:: atlas_core.secrets
+   :members:

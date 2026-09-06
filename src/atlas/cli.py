@@ -85,6 +85,16 @@ def cmd_check(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_secret_check(args: argparse.Namespace) -> int:
+    """Verify required logical names without displaying their values."""
+    from atlas_core.secrets import load_provider
+
+    provider = load_provider()
+    values = provider.get_many(args.names)
+    print(f"secrets: {len(values)}/{len(set(args.names))} available")
+    return 0
+
+
 def cmd_context(_: argparse.Namespace) -> int:
     """Print the host and Atlas path context as JSON."""
     paths = get_paths()
@@ -196,6 +206,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name, function in (("status", cmd_status), ("check", cmd_check), ("context", cmd_context)):
         command = sub.add_parser(name)
         command.set_defaults(func=function)
+
+    secrets = sub.add_parser("secret")
+    secrets_sub = secrets.add_subparsers(dest="secret_command", required=True)
+    secret_check = secrets_sub.add_parser("check")
+    secret_check.add_argument("names", nargs="+")
+    secret_check.set_defaults(func=cmd_secret_check)
 
     program = sub.add_parser("program")
     program_sub = program.add_subparsers(dest="program_command", required=True)

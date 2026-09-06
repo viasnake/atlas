@@ -137,3 +137,141 @@ exit status. Stdout and stderr are not copied into this log.
 The executor preserves the child exit status, returns ``124`` for a timeout, and maps a signal
 termination to ``128 + signal``. The child is launched with the caller's working directory and
 with an exact argument vector; shell interpretation is not used.
+
+External secrets
+----------------
+
+Programs can retrieve required secrets through ``atlas_core.secrets``. A logical
+name has the form ``system.purpose[.detail]``, for example
+``mysql.backup.password``. Programs declare these names; the Atlas host owns the
+mapping to external identifiers. Values remain in the retrieving process, and
+successful reads are cached only for the lifetime of that provider instance.
+Create a new instance for each execution to observe subsequent secret updates.
+
+The initial adapter uses the official Bitwarden Secrets Manager Python SDK.
+Install the optional dependency in every interpreter that retrieves secrets,
+including a program's dedicated virtual environment::
+
+    python -m pip install 'atlas[secrets]'
+
+The SDK requires a supported platform wheel. Atlas's core installation does not
+require it. ``SecretProvider`` exposes only ``get`` and ``get_many``; provider
+configuration, authentication and backend identifiers stay behind the adapter.
+There is no secret creation, rotation, persistent cache, or secret export API.
+
+Host setup
+~~~~~~~~~~
+
+In Bitwarden Secrets Manager Cloud, create a project and a machine account with
+read permission on that project. Create an access token for that account. Keep
+administrative recovery access outside the infrastructure being rebuilt. Do not
+use a production access token in CI.
+
+Place the access token in ``/etc/atlas/credentials/secret-provider`` without
+printing it or putting it in shell arguments. The regular file must belong to
+the user executing the program, have mode ``0600`` and a single hard link, and
+have no symlink components. Each execution account needs its own securely
+provisioned credential. Atlas does not change users or grant access.
+
+Create ``/etc/atlas/secrets.yml`` with identifiers, never values:
+
+.. code-block:: yaml
+
+    provider: bitwarden
+    config:
+      region: us
+      credential_file: /etc/atlas/credentials/secret-provider
+      project_id: 00000000-0000-4000-8000-000000000001
+    mappings:
+      mysql.backup.password:
+        secret_id: 00000000-0000-4000-8000-000000000002
+
+Replace these example UUIDs with the project's and secret's identifiers. The
+``region`` is ``us`` or ``eu``. Responses must belong to the configured project.
+Duplicate YAML keys, unsupported providers, malformed mappings, missing values,
+empty values and retrieval errors fail closed. Configuration errors are distinct
+from retrieval errors. Provider error bodies are not included in diagnostics.
+The adapter never requests an SDK state file.
+
+``ATLAS_ETC_DIR`` selects a different Atlas configuration directory, as it does
+for other Atlas configuration files. Keep this host configuration outside the
+Provisioning repository. The bootstrap credential is separate from this mapping
+and must not be backed up into Git.
+
+Check the names needed by an execution without displaying their values::
+
+    atlas secret check mysql.backup.password
+
+The command reports the available count and returns zero only if every requested
+name resolves. Failure returns status 2. There is no value-printing command.
+An empty request is not an authentication check and is rejected by the CLI.
+
+Program integration
+~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+    from atlas_core.secrets import load_provider
+
+    provider = load_provider()
+    values = provider.get_many(["mysql.backup.password"])
+
+Resolve the complete required set before starting operations. Do not log values,
+returned dictionaries, or local variables containing them. Program output is
+outside Atlas's run-record redaction boundary. Consumers must protect all output
+channels and use Ansible's ``no_log: true`` for tasks that expose secrets.
+The public Python API returns strings; it is not a sandbox for trusted programs.
+Tests can supply any object implementing ``get`` and ``get_many`` without loading
+the SDK or connecting to a service.
+
+To add a secret, create it in the external project, add its logical-name mapping
+on the Atlas host, and declare the logical name in the consuming program. To
+rotate a value, update the external secret and coordinate the corresponding
+service credential change. A new program execution retrieves the updated value;
+Atlas does not rotate the target service credential itself.
+
+Recovery and manual acceptance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use a dedicated test project and synthetic values for this acceptance procedure.
+Do not copy an existing control host's disk, snapshot, secret cache, or credential
+file into the test host.
+
+1. Provision a new Linux control host and install Atlas and its optional secrets
+   dependency. Register a clean checkout of the automation program and prepare
+   its interpreter and Ansible dependencies.
+2. Sign in to Bitwarden using recovery access held outside Proxmox. Issue a new
+   access token for the read-only machine account and securely place it in the
+   new host's owner-only credential file.
+3. Restore the non-secret Atlas configuration and logical-name mappings from
+   their independent backup. Restore host identity and program registration.
+4. Run ``atlas secret check`` with every name required by the test execution.
+5. Start the program against a disposable local Ansible target and verify the
+   expected result without displaying the injected value.
+6. Change a synthetic value in Bitwarden, start a new execution, and verify it
+   observes the change. Revoke the test token and verify a subsequent execution
+   fails before Ansible starts. Confirm that logs and persistent directories
+   contain neither synthetic values nor the bootstrap token.
+
+A mocked-provider test does not prove this external recovery procedure. Record
+live acceptance evidence separately from repository test results. Existing
+secret copies must remain recoverable until external storage and recovery have
+been verified; remove superseded local or Ansible Vault copies after that check.
+A credential committed in plaintext requires rotation, even if removed from HEAD.
+History rewriting requires a separately agreed scope.
+
+Changing providers
+~~~~~~~~~~~~~~~~~~
+
+Implement the same retrieval contract in another adapter, then migrate data using
+that provider's supported tools. Maintain a controlled correspondence between
+each logical name, the old identifier, and the new identifier. Keep exported
+values out of Git, command output, and persistent plaintext staging files.
+Verify destination values and recovery with a test execution before switching
+host configuration and retiring old access. Only the adapter, host configuration,
+mappings and bootstrap credential change; program declarations and Ansible roles
+retain their logical names. Atlas does not currently ship other adapters.
+
+Official setup details are available in the `SDK documentation
+<https://bitwarden.com/help/secrets-manager-sdk/>`_ and `machine account guidance
+<https://bitwarden.com/help/machine-accounts/>`_.
