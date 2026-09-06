@@ -42,7 +42,12 @@ class _Reader:
         """Fetch only requested IDs; never create an SDK state file."""
         try:
             if self.client is None:
-                from bitwarden_sdk import BitwardenClient, client_settings_from_dict
+                try:
+                    from bitwarden_sdk import BitwardenClient, client_settings_from_dict
+                except ImportError:
+                    raise SecretConfigurationError(
+                        "secret provider dependency is unavailable"
+                    ) from None
 
                 suffix = "com" if self.region == "us" else "eu"
                 client = BitwardenClient(client_settings_from_dict({

@@ -226,3 +226,17 @@ def test_official_sdk_response_contract(tmp_path, monkeypatch):
     assert provider.get("mysql.backup.password") == "synthetic-sdk-value"
     assert calls[0]["loginAccessToken"].get("stateFile") is None
     assert calls[1]["secrets"]["getByIds"]["ids"] == [secret_id]
+
+
+def test_missing_sdk_is_a_configuration_error(tmp_path, monkeypatch):
+    import sys
+
+    from atlas_core.secrets.providers.bitwarden import create_provider
+
+    monkeypatch.setitem(sys.modules, "bitwarden_sdk", None)
+    provider = create_provider({
+        "region": "us", "credential_file": str(tmp_path / "unused"),
+        "project_id": "00000000-0000-4000-8000-000000000001",
+    }, {"mysql.backup.password": {"secret_id": "00000000-0000-4000-8000-000000000002"}})
+    with pytest.raises(SecretConfigurationError, match="dependency is unavailable"):
+        provider.get("mysql.backup.password")

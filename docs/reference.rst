@@ -190,7 +190,8 @@ Replace these example UUIDs with the project's and secret's identifiers. The
 ``region`` is ``us`` or ``eu``. Responses must belong to the configured project.
 Duplicate YAML keys, unsupported providers, malformed mappings, missing values,
 empty values and retrieval errors fail closed. Configuration errors are distinct
-from retrieval errors. Provider error bodies are not included in diagnostics.
+from retrieval errors. A missing SDK is a local configuration error. Provider
+error bodies are not included in diagnostics.
 The adapter never requests an SDK state file.
 
 ``ATLAS_ETC_DIR`` selects a different Atlas configuration directory, as it does
