@@ -31,7 +31,10 @@ def get_run_directory() -> Path | None:
     """Return supervisor-owned storage, or None outside an Atlas execution.
 
     Children must remain in the supervisor's process group and leave storage
-    cleanup to Atlas. An older supervisor without this contract is rejected.
+    cleanup to Atlas. Create a private subdirectory for application files;
+    dotfiles and ``run-`` subdirectories are reserved for Atlas coordination.
+    Nested directories remain until the outer execution finishes. An older
+    supervisor without this contract is rejected.
     """
     value = os.environ.get("ATLAS_RUN_TEMP_DIR")
     if value is None:
@@ -39,9 +42,13 @@ def get_run_directory() -> Path | None:
             raise ValueError("Atlas supervisor does not provide volatile execution storage")
         return None
     path = Path(value)
-    if not path.is_absolute() or path.parent != _storage_root():
+    root = _storage_root()
+    if not path.is_absolute() or root not in path.parents:
         raise ValueError("invalid Atlas run directory")
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.getuid():
-        raise ValueError("invalid Atlas run directory")
+    directory = path
+    while directory != root:
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.getuid():
+            raise ValueError("invalid Atlas run directory")
+        directory = directory.parent
     return path

@@ -18,7 +18,6 @@ from atlas.execution import (
     _append_run_log,
     _execution_signals,
     _exit_code,
-    _terminate,
     execute,
 )
 from atlas.paths import ensure_dirs, get_paths
@@ -138,22 +137,7 @@ class FakeProcess:
         return int(value)
 
 
-def test_process_helpers_cover_signal_and_timeout_paths(monkeypatch) -> None:
-    calls: list[tuple[int, int]] = []
-    monkeypatch.setattr(execution_module.os, "killpg", lambda pid, signum: calls.append((pid, signum)))
-    process = FakeProcess([subprocess.TimeoutExpired("x", 1), 0])
-    _terminate(process)
-    assert calls == [(100, signal.SIGTERM), (100, signal.SIGKILL)]
-
-    monkeypatch.setattr(execution_module.os, "killpg", lambda _pid, _signum: (_ for _ in ()).throw(ProcessLookupError()))
-    _terminate(FakeProcess([]))
-    calls.clear()
-    def kill_term_then_gone(_pid: int, signum: int) -> None:
-        calls.append((100, signum))
-        if signum == signal.SIGKILL:
-            raise ProcessLookupError()
-    monkeypatch.setattr(execution_module.os, "killpg", kill_term_then_gone)
-    _terminate(FakeProcess([subprocess.TimeoutExpired("x", 1), 0]))
+def test_signal_exit_status_conversion():
     assert _exit_code(-signal.SIGTERM) == 128 + signal.SIGTERM
     assert _exit_code(7) == 7
 
@@ -362,7 +346,7 @@ def test_execution_spawn_and_signal_error_paths(tmp_path: Path, monkeypatch) -> 
             raise KeyboardInterrupt
 
     monkeypatch.setattr(execution_module.subprocess, "Popen", lambda *_args, **_kwargs: InterruptingProcess([]))
-    monkeypatch.setattr(execution_module, "_terminate", lambda _process: None)
+    monkeypatch.setattr(execution_module, "stop_tree", lambda *_args: None)
     assert execute(paths, command, []) == 130
 
     command.path.write_text("#!/bin/sh\nrm \"$ATLAS_CONTEXT_FILE\"\n", encoding="utf-8")

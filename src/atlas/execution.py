@@ -7,17 +7,19 @@ import os
 import signal
 import stat
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from getpass import getuser
 from pathlib import Path
 from uuid import uuid4
 
-from atlas_core.execution import temporary_run_directory
+from atlas_core.execution import get_run_directory, temporary_run_directory
 from atlas_core.host import get_host
 
+from ._process_tree import nested_directory, stop_tree
 from .catalog import CommandRef
 from .context import child_environment, execution_context, write_context
 from .paths import AtlasPaths
@@ -26,7 +28,6 @@ from .runtime import venv_python
 TIMEOUT_EXIT_CODE = 124
 MISSING_EXECUTABLE_EXIT_CODE = 127
 SIGNAL_EXIT_OFFSET = 128
-_TERMINATE_GRACE_SECONDS = 2
 
 
 def _append_run_log(paths: AtlasPaths, record: dict[str, object]) -> None:
@@ -48,23 +49,6 @@ def _append_run_log(paths: AtlasPaths, record: dict[str, object]) -> None:
     finally:
         if descriptor != -1:
             os.close(descriptor)
-
-
-def _terminate(process: subprocess.Popen[object]) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=_TERMINATE_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        pass
-    # The group can outlive its leader, including after a successful command.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.wait()
 
 
 @contextmanager
@@ -197,15 +181,18 @@ def execute(
         )
         if command.program.runtime.python_version is not None:
             environment["ATLAS_PYTHON_VERSION"] = command.program.runtime.python_version
-        with _execution_signals() as received, temporary_run_directory() as directory:
+        parent_directory = get_run_directory() if os.environ.get("ATLAS_RUN_TEMP_DIR") else None
+        storage = (temporary_run_directory() if parent_directory is None
+                   else nullcontext(nested_directory(parent_directory)))
+        with _execution_signals() as received, storage as directory:
             environment["ATLAS_RUN_TEMP_DIR"] = str(directory)
             try:
                 try:
                     process = subprocess.Popen(
-                        argv,
+                        [sys.executable, "-I", str(Path(__file__).with_name("_process_tree.py")), str(directory), *argv],
                         cwd=working_directory,
                         env=environment,
-                        start_new_session=True,
+                        start_new_session=False,
                     )
                 except FileNotFoundError:
                     exit_code = MISSING_EXECUTABLE_EXIT_CODE
@@ -221,7 +208,7 @@ def execute(
                         exit_code = 130
             finally:
                 if process is not None:
-                    _terminate(process)
+                    stop_tree(directory, process, received[0] if received else signal.SIGTERM)
     finally:
         try:
             context_file.unlink()

@@ -4,7 +4,6 @@ import os
 import signal
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -99,11 +98,3 @@ def test_storage_cleanup_precedes_log_failure(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="record unavailable"):
         executor.execute(paths, command, [])
     assert list(paths.context_dir.iterdir()) == []
-
-
-def test_group_descendants_are_killed_when_leader_has_exited(monkeypatch):
-    calls = []
-    monkeypatch.setattr(executor.os, "killpg", lambda pid, sig: calls.append((pid, sig)))
-    process = SimpleNamespace(pid=123, wait=lambda **_kwargs: 0)
-    executor._terminate(process)
-    assert calls == [(123, signal.SIGTERM), (123, signal.SIGKILL)]
